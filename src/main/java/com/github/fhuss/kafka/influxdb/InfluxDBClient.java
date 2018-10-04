@@ -22,26 +22,15 @@ import org.asynchttpclient.util.Base64;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedWriter;
-import java.io.OutputStreamWriter;
-import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.util.List;
-
-import com.github.fhuss.kafka.influxdb.internal.ByteBufferOutputStream;
 
 class InfluxDBClient {
 
     private static final Logger LOG = LoggerFactory.getLogger(InfluxDBClient.class);
 
-    private static final int BUFFER_ALLOC = 1024 * 64;
-
-    private static final Charset CHARSET = Charset.forName("UTF-8");
-
     private InfluxDBMetricsConfig config;
 
     private AsyncHttpClient asyncHttpClient;
-    private ByteBufferOutputStream bbos;
 
     private boolean isDatabaseCreated = false;
 
@@ -57,7 +46,6 @@ class InfluxDBClient {
 
         DefaultAsyncHttpClientConfig.Builder builder = new DefaultAsyncHttpClientConfig.Builder();
         this.asyncHttpClient = new DefaultAsyncHttpClient(builder.build());
-        this.bbos = new ByteBufferOutputStream(ByteBuffer.allocate(BUFFER_ALLOC));
 
         this.credentials = Base64.encode((config.getUsername() + ":" + config.getPassword()).getBytes());
 
@@ -73,35 +61,31 @@ class InfluxDBClient {
                         .addQueryParam("q", "CREATE DATABASE " + database))
                         .get();
         } catch (Exception e) {
-            LOG.error("Cannot create database {}", database);
+            LOG.error("Cannot create database {}", database, e);
         }
         return this.isDatabaseCreated;
     }
 
-    public void write(List<Point> points) throws Exception {
+    public void write(List<Point> points) {
         if (this.isDatabaseCreated || createDatabase(this.config.getDatabase())) {
-            ByteBuffer buffer = bbos.buffer();
-            buffer.clear();
-            OutputStreamWriter out = new OutputStreamWriter(bbos, CHARSET);
-            BufferedWriter writer = new BufferedWriter(out);
+            StringBuilder sb = new StringBuilder();
 
             for (Point point : points) {
                 point.addTags(this.config.getTags()); // add additional tags before writing line.
-                writer.write(point.asLineProtocol());
-                writer.newLine();
+                sb.append(point.asLineProtocol()).append("\n");
             }
-            writer.flush();
 
-            buffer.flip();
+            // body size logged in chars, not (UTF-8) bytes
+            LOG.info("sending {} points to InfluxDB, body={}c", points.size(), sb.length());
             RequestBuilder requestBuilder = new RequestBuilder()
                     .setUri(Uri.create(this.config.getConnectString() + "/write"))
                     .addQueryParam("db", this.config.getDatabase())
                     .setMethod("POST")
                     .addHeader("Authorization", "Basic " + credentials)
-                    .setBody(buffer);
+                    .setBody(sb.toString());
 
             requestBuilder.addQueryParam("precision", "ms");
-            if( this.config.getRetention() != null)
+            if( this.config.getRetention() != null && !this.config.getRetention().isEmpty())
                 requestBuilder.addQueryParam("rp", this.config.getRetention());
             if( this.config.getConsistency() != null )
                 requestBuilder.addQueryParam("consistency", this.config.getConsistency());

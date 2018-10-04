@@ -16,16 +16,19 @@
  */
 package com.github.fhuss.kafka.influxdb;
 
+import com.yammer.metrics.core.MetricName;
 import kafka.utils.VerifiableProperties;
 
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 class InfluxDBMetricsConfig {
 
-    private static final List<String> RETENTION_POLICIES = Arrays.asList("one", "quorum", "all", "any");
+    private static final List<String> RETENTION_POLICIES = Arrays.asList("one", "quorum", "all", "any", "");
 
     private static final String KAFKA_INFLUX_METRICS_CONNECT_CONFIG     = "kafka.influxdb.metrics.address";
     private static final String KAFKA_INFLUX_METRICS_DATABASE_CONFIG    = "kafka.influxdb.metrics.database";
@@ -33,6 +36,7 @@ class InfluxDBMetricsConfig {
     private static final String KAFKA_INFLUX_METRICS_PASSWORD_CONFIG    = "kafka.influxdb.metrics.password";
     private static final String KAFKA_INFLUX_METRICS_CONSISTENCY_CONFIG = "kafka.influxdb.metrics.consistency";
     private static final String KAFKA_INFLUX_METRICS_RETENTION_CONFIG   = "kafka.influxdb.metrics.retention";
+    private static final String KAFKA_INFLUX_METRICS_OMIT_CONFIG        = "kafka.influxdb.metrics.omit";
     private static final String KAFKA_INFLUX_METRICS_TAGS_CONFIG        = "kafka.influxdb.metrics.tags";
     private static final String KAFKA_GRAPHITE_MEASURE_ENABLED_CONFIG   = "kafka.influxdb.measure.enabled";
     static final String KAFKA_INFLUX_METRICS_ENABLE                     = "kafka.influxdb.metrics.reporter.enabled";
@@ -44,6 +48,7 @@ class InfluxDBMetricsConfig {
     private String consistency;
     private String retention;
     private Map<String, String> tags = new HashMap<>();
+    private Set<String> omit = new HashSet<>();
     private Map<MetricsPredicate.Measures, Boolean> predicates = new HashMap<>();
 
     /**
@@ -64,6 +69,7 @@ class InfluxDBMetricsConfig {
         }
         setAdditionalTags(props);
         setMeasuresFilters(props);
+        setOmit(props);
     }
 
     private void setMeasuresFilters(VerifiableProperties props) {
@@ -87,6 +93,15 @@ class InfluxDBMetricsConfig {
         if( ! RETENTION_POLICIES.contains(this.retention)) {
             throw new IllegalArgumentException(
                     String.format("Unknown retention policy '%s': %s", retention, RETENTION_POLICIES ));
+        }
+    }
+
+    private void setOmit(VerifiableProperties props) {
+        String omissions = props.getString(KAFKA_INFLUX_METRICS_OMIT_CONFIG, null);
+        if( omissions != null ) {
+            for(String metricName : omissions.split(",") ) {
+                omit.add(metricName);
+            }
         }
     }
 
@@ -152,5 +167,9 @@ class InfluxDBMetricsConfig {
 
     Map<MetricsPredicate.Measures, Boolean> getPredicates() {
         return predicates;
+    }
+
+    boolean omit(MetricName metric) {
+        return omit.contains(metric.getName());
     }
 }

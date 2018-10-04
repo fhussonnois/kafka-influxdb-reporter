@@ -46,7 +46,7 @@ public class KafkaInfluxMetricsReporter implements KafkaMetricsReporter, KafkaIn
             config.addTag("brokerId", props.getString("broker.id"));
 
             this.reporter = new InfluxReporter(Metrics.defaultRegistry(), DEFAULT_NAME
-                    ,new InfluxDBClient(config), new MetricsPredicate(config.getPredicates()));
+                    ,new InfluxDBClient(config), new MetricsPredicate(config.getPredicates()),config);
 
             if (props.getBoolean(InfluxDBMetricsConfig.KAFKA_INFLUX_METRICS_ENABLE, false)) {
                 initialized = true;

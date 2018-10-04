@@ -69,7 +69,8 @@ kafka.influxdb.metrics.reporter.enabled=true
 | **kafka.influxdb.metrics.password**      | Password for authentication         | {"root"}          |
 | **kafka.influxdb.metrics.consistency**   | -                                   |                   |
 | **kafka.influxdb.metrics.retention**     | -                                   |                   |
-| **kafka.influxdb.metrics.tags**          | Custom Additional Tags              |                   |
+| **kafka.influxdb.metrics.tags**          | Custom Additional Tags: comma-separated key=value pairs              |                   |
+| **kafka.influxdb.metrics.omit**          | Comma-separated list of metric names to omit |                   |
 
 ## Metrics measures:
 
