@@ -6,7 +6,7 @@
 
     <groupId>com.github.fhuss</groupId>
     <artifactId>kafka-influxdb-metrics-reporter</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0-rc0</version>
 
     <licenses>
         <license>

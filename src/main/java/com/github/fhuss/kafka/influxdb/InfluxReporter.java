@@ -49,10 +49,12 @@ class InfluxReporter extends AbstractPollingReporter implements MetricProcessor<
 
     private VirtualMachineMetrics vm = VirtualMachineMetrics.getInstance();
 
+    private final InfluxDBMetricsConfig config;
+
     /**
      * Creates a new {@link AbstractPollingReporter} instance.
      **/
-    InfluxReporter(MetricsRegistry registry, String name, InfluxDBClient client, MetricsPredicate predicate) {
+    InfluxReporter(MetricsRegistry registry, String name, InfluxDBClient client, MetricsPredicate predicate, InfluxDBMetricsConfig config) {
         super(registry, name);
         this.client = client;
         this.clock = Clock.defaultClock();
@@ -63,6 +65,7 @@ class InfluxReporter extends AbstractPollingReporter implements MetricProcessor<
                 return InfluxReporter.this.clock.time();
             }
         };
+        this.config = config;
     }
 
     @Override
@@ -81,11 +84,11 @@ class InfluxReporter extends AbstractPollingReporter implements MetricProcessor<
         for (Map.Entry<String, SortedMap<MetricName, Metric>> entry : getMetricsRegistry().groupedMetrics(DEFAULT_METRIC_PREDICATE).entrySet()) {
             for (Map.Entry<MetricName, Metric> subEntry : entry.getValue().entrySet()) {
                 final Metric metric = subEntry.getValue();
-                if (metric != null) {
+                if (metric != null && !config.omit(subEntry.getKey())) {
                     try {
                         metric.processWith(this, subEntry.getKey(), context);
-                    } catch (Exception ignored) {
-                        LOG.error("Error printing regular metrics:", ignored);
+                    } catch (Exception e) {
+                        LOG.error("Error printing regular metrics: {}", e);
                     }
                 }
             }
@@ -133,7 +136,13 @@ class InfluxReporter extends AbstractPollingReporter implements MetricProcessor<
         Point point = buildPoint(name, context);
         Object fieldValue = gauge.value();
         String fieldName = value.label();
-        if( fieldValue instanceof Float)
+        if (name.getName().equals("ClusterId") && name.getType().equals("KafkaServer"))
+            point.addField("name", fieldValue.toString());
+
+        else if (name.getType().equals("ReplicaFetcherManager"))
+            point.addField(fieldName, Double.valueOf(fieldValue.toString()));
+
+        else if( fieldValue instanceof Float)
             point.addField(fieldName, (Float)fieldValue);
         else if( fieldValue instanceof Double)
             point.addField(fieldName, (Double)fieldValue);

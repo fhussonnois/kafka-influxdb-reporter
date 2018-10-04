@@ -34,7 +34,7 @@ class Point {
     }
 
     public Point addField(String field, float value) {
-        this.fields.put(field, Float.toString(value));
+        this.fields.put(field, String.valueOf(value));
         return this;
     }
 
