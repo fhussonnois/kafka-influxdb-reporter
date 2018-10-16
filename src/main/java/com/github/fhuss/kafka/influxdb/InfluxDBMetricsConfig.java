@@ -39,6 +39,7 @@ class InfluxDBMetricsConfig {
     private static final String KAFKA_INFLUX_METRICS_OMIT_CONFIG        = "kafka.influxdb.metrics.omit";
     private static final String KAFKA_INFLUX_METRICS_TAGS_CONFIG        = "kafka.influxdb.metrics.tags";
     private static final String KAFKA_GRAPHITE_MEASURE_ENABLED_CONFIG   = "kafka.influxdb.measure.enabled";
+    private static final String KAFKA_INFLUX_METRICS_QUANTIZE_TO_TIME_PERIOD = "kafka.influxdb.polling.interval.quantize";
     static final String KAFKA_INFLUX_METRICS_ENABLE                     = "kafka.influxdb.metrics.reporter.enabled";
 
     private String connectString;
@@ -50,6 +51,7 @@ class InfluxDBMetricsConfig {
     private Map<String, String> tags = new HashMap<>();
     private Set<String> omit = new HashSet<>();
     private Map<MetricsPredicate.Measures, Boolean> predicates = new HashMap<>();
+    private boolean quantizeReportPeriod;
 
     /**
      * Creates a new {@link InfluxDBMetricsConfig} instance.
@@ -67,6 +69,7 @@ class InfluxDBMetricsConfig {
             this.retention = props.getString(KAFKA_INFLUX_METRICS_RETENTION_CONFIG);
             checkRetentionPolicies();
         }
+        this.quantizeReportPeriod = props.getBoolean(KAFKA_INFLUX_METRICS_QUANTIZE_TO_TIME_PERIOD, false);
         setAdditionalTags(props);
         setMeasuresFilters(props);
         setOmit(props);
@@ -171,5 +174,14 @@ class InfluxDBMetricsConfig {
 
     boolean omit(MetricName metric) {
         return omit.contains(metric.getName());
+    }
+
+    /** If true, then the user has asked that reporting periods are quantized, ie. snapped to
+     *  a consistent value. For example if a period of 60s has been requested then all nodes will
+     *  poll for their metrics at the top of the minute. If false, then there will be no (rough)
+     *  synchronicity between the reporting times of each node in a cluster.
+     */
+    boolean quantizeReportingPeriod() {
+        return this.quantizeReportPeriod;
     }
 }
