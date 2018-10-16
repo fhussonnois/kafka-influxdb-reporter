@@ -48,7 +48,7 @@ SELECT * FROM RequestMetrics WHERE metric = 'TotalTimeMs' AND request = 'Produce
 ## Installation
 
 1. Build this project using `mvn clean package`
-2. Add `kafka-influxdb-metrics-reporter-0.1.0-shaded.jar` to the `libs/` directory of your kafka broker installation.
+2. Add `kafka-influxdb-metrics-reporter-0.3.0-shaded.jar` to the `libs/` directory of your kafka broker installation.
 3. Configure the broker (see the configuration section below).
 4. Restart the broker.
 
@@ -69,8 +69,12 @@ kafka.influxdb.metrics.reporter.enabled=true
 | **kafka.influxdb.metrics.password**      | Password for authentication         | {"root"}          |
 | **kafka.influxdb.metrics.consistency**   | -                                   |                   |
 | **kafka.influxdb.metrics.retention**     | -                                   |                   |
-| **kafka.influxdb.metrics.tags**          | Custom Additional Tags: comma-separated key=value pairs              |                   |
-| **kafka.influxdb.metrics.omit**          | Comma-separated list of metric names to omit |                   |
+| **kafka.influxdb.metrics.tags**          | Custom Additional Tags: comma separated <br>&nbsp;&nbsp;*key=value*<br> pairs | |
+| _Advanced Configuration_ |
+| **kafka.metrics.polling.interval.secs**  | Change the reporting frequency      | 10                |
+| **kafka.influxdb.metrics.omit**          | Comma-separated list of metric names to omit |          |
+| **kafka.influxdb.polling.interval.quantize** | If set to **true**, then reports will be emitted on quantized boundaries. For example: if *kafka.metrics.polling.interval.secs* is 10, then reports will be emitted at 0, 10, 20, 30, 40, 50 seconds past the minute. <br>Otherwise they will be emitted every 10 seconds after initialisation.| false |
+
 
 ## Metrics measures:
 
@@ -99,6 +103,11 @@ By default all stats are reported. You can disabled some with the following prop
 ## Example Grafana Dashboard
 
 ![Grafana](./dashboards/Grafana-Kafka-Cluster-Overview.png)
+
+## Versions
+* 0.3.0: Add option to snap reporting time to a predictable (quantized) period, e.g. on 0, 10, 20, ... seconds past the top of the minute 
+* 0.2.0-rc0: POST Truncation bug fix, resolve 400 from Influx where ClusterID sent as numeric
+* 0.1.0: Initial version
 
 ## Contributions
 Any contribution is welcome

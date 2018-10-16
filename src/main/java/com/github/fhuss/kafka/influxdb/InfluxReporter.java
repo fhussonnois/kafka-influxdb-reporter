@@ -16,8 +16,20 @@
  */
 package com.github.fhuss.kafka.influxdb;
 
-import com.yammer.metrics.core.*;
-import com.yammer.metrics.reporting.AbstractPollingReporter;
+import com.yammer.metrics.core.Clock;
+import com.yammer.metrics.core.Counter;
+import com.yammer.metrics.core.Gauge;
+import com.yammer.metrics.core.Histogram;
+import com.yammer.metrics.core.Metered;
+import com.yammer.metrics.core.Metric;
+import com.yammer.metrics.core.MetricName;
+import com.yammer.metrics.core.MetricPredicate;
+import com.yammer.metrics.core.MetricProcessor;
+import com.yammer.metrics.core.MetricsRegistry;
+import com.yammer.metrics.core.Summarizable;
+import com.yammer.metrics.core.Timer;
+import com.yammer.metrics.core.VirtualMachineMetrics;
+import com.yammer.metrics.reporting.AbstractReporter;
 import com.yammer.metrics.stats.Snapshot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,34 +40,48 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static com.github.fhuss.kafka.influxdb.MetricsPredicate.Measures.*;
 
-class InfluxReporter extends AbstractPollingReporter implements MetricProcessor<InfluxReporter.Context> {
+/**
+ * Kafka {@link AbstractReporter} which can process different types of metrics by adding them to a
+ * local "batch" of {@link Point}s ready for transmission to InfluxDB. While this is effectively an
+ * {@link com.yammer.metrics.reporting.AbstractPollingReporter} it does not extend it directly
+ * because the {@code AbstractPollingReporter} has a reporting time drift due to its use of
+ * {@link ScheduledExecutorService#scheduleWithFixedDelay(Runnable, long, long, TimeUnit)} in {@code start()}.
+ * This class uses {@link ScheduledExecutorService#scheduleAtFixedRate(Runnable, long, long, TimeUnit)} (see
+ * docs for the differences).
+ */
+class InfluxReporter extends AbstractReporter implements MetricProcessor<InfluxReporter.Context>, Runnable {
 
     private static final Logger LOG = LoggerFactory.getLogger(InfluxReporter.class);
 
     private static final MetricPredicate DEFAULT_METRIC_PREDICATE = MetricPredicate.ALL;
 
-    private List<Point> nextBatchPoints;
+    private final List<Point> nextBatchPoints = new LinkedList<>();
 
-    private InfluxDBClient client;
+    private final InfluxDBClient client;
 
-    private Clock clock;
+    private final Clock clock;
 
-    private Context context;
+    private final Context context;
 
-    private MetricsPredicate predicate;
+    private final MetricsPredicate predicate;
 
-    private VirtualMachineMetrics vm = VirtualMachineMetrics.getInstance();
+    private final VirtualMachineMetrics vm = VirtualMachineMetrics.getInstance();
 
     private final InfluxDBMetricsConfig config;
 
+    private final ScheduledExecutorService executor;
+
     /**
-     * Creates a new {@link AbstractPollingReporter} instance.
+     * Creates a new {@link AbstractReporter} instance.
      **/
     InfluxReporter(MetricsRegistry registry, String name, InfluxDBClient client, MetricsPredicate predicate, InfluxDBMetricsConfig config) {
-        super(registry, name);
+        super(registry);
+        this.executor = registry.newScheduledThreadPool(1, name);
         this.client = client;
         this.clock = Clock.defaultClock();
         this.predicate = predicate;
@@ -68,13 +94,48 @@ class InfluxReporter extends AbstractPollingReporter implements MetricProcessor<
         this.config = config;
     }
 
+    /**
+     * Starts the reporter polling at the given period.
+     * @param delayInSeconds     time period
+     * @param periodInSeconds    the amount of time between polls
+     */
+    void start(long delayInSeconds, long periodInSeconds) {
+        executor.scheduleAtFixedRate(this, delayInSeconds, periodInSeconds, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Shuts down the reporter polling, waiting the specific amount of time for any current polls to
+     * complete.
+     *
+     * @param timeout    the maximum time to wait
+     * @param unit       the unit for {@code timeout}
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public void shutdown(long timeout, TimeUnit unit) throws InterruptedException {
+        executor.shutdown();
+        if (timeout >= 0) {
+            executor.awaitTermination(timeout, unit);
+        }
+        super.shutdown();
+    }
+
+    @Override
+    public void shutdown() {
+        try {
+            shutdown(-1, null);
+        } catch (InterruptedException e) {
+            // can't happen with a timeout of -1
+            LOG.error("unexpected {}", e.getMessage());
+        }
+    }
+
     @Override
     public void run() {
         try {
-            this.nextBatchPoints = new LinkedList<>();
             printRegularMetrics(context);
             processVirtualMachine(vm, context);
             this.client.write(nextBatchPoints);
+            this.nextBatchPoints.clear();
         } catch (Exception e) {
             LOG.error("Cannot send metrics to InfluxDB {}", e);
         }

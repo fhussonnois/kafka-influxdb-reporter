@@ -25,6 +25,16 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Mixin class which satisfies the KafkaMetricsReporter lifecycle and handles calls via JMX.<p>
+ *
+ * Inspection of <a href="https://github.com/apache/kafka/blob/trunk/core/src/main/scala/kafka/metrics/KafkaMetricsReporter.scala">KafkaMetricsReporter.scala</a>
+ * suggests that the {@link #startReporter(long)} is not explicitly called - the lifecycle is triggered
+ * by (no-arg) Construction followed by a call to {@link #init(VerifiableProperties)}.<p>
+ *
+ * if Kafka is started with the reporting disabled, the properties could be changed via JMX and {@link #startReporter(long)}
+ * called via JMX, but this seems unlikely in a production system?
+ */
 public class KafkaInfluxMetricsReporter implements KafkaMetricsReporter, KafkaInfluxMetricsReporterMBean {
 
     private static final Logger LOG = LoggerFactory.getLogger(KafkaInfluxMetricsReporter.class);
@@ -35,6 +45,7 @@ public class KafkaInfluxMetricsReporter implements KafkaMetricsReporter, KafkaIn
     private boolean running = false;
 
     private InfluxReporter reporter;
+    private boolean quantizeReportingPeriods;
 
     @Override
     public void init(VerifiableProperties props) {
@@ -44,6 +55,7 @@ public class KafkaInfluxMetricsReporter implements KafkaMetricsReporter, KafkaIn
 
             InfluxDBMetricsConfig config = new InfluxDBMetricsConfig(props);
             config.addTag("brokerId", props.getString("broker.id"));
+            this.quantizeReportingPeriods = config.quantizeReportingPeriod();
 
             this.reporter = new InfluxReporter(Metrics.defaultRegistry(), DEFAULT_NAME
                     ,new InfluxDBClient(config), new MetricsPredicate(config.getPredicates()),config);
@@ -59,9 +71,24 @@ public class KafkaInfluxMetricsReporter implements KafkaMetricsReporter, KafkaIn
     @Override
     public void startReporter(long pollingPeriodInSeconds) {
         if (initialized && !running) {
-            reporter.start(pollingPeriodInSeconds, TimeUnit.SECONDS);
+            final long nowInSeconds = TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis());
+            final long delayInSeconds = pollingPeriodInSeconds - nowInSeconds % pollingPeriodInSeconds;
+            if (quantizeReportingPeriods && delayInSeconds > 0) {
+                // the default reporter starts in "pollingPeriodInSeconds" time, and every "pollingPeriod..."
+                // thereafter. We don't want this, because we want to have reporting start consistently
+                // across all nodes in the cluster - if the period is (say) 60 seconds, then we want to wait
+                // until the second hand reaches 0 and *then* start. If we're unlucky and wait for a full
+                // 59 seconds before invoking start, then it will look like we've missed a minute of data
+                // after a node restart, but that will appear as a "bump" in the following minute.
+                LOG.info("Delaying startup for {}s", delayInSeconds);
+
+                reporter.start(delayInSeconds, pollingPeriodInSeconds);
+            } else  {
+                reporter.start(pollingPeriodInSeconds, pollingPeriodInSeconds);
+            }
+            LOG.info(String.format("Starting KafkaInfluxMetricsReporter in %d seconds, with polling period %d seconds", delayInSeconds, pollingPeriodInSeconds));
+            // deliberately always say "running", even if there is a deferred start to avoid repeated restart
             running = true;
-            LOG.info(String.format("Started KafkaInfluxMetricsReporter with polling period %d seconds", pollingPeriodInSeconds));
         }
     }
 

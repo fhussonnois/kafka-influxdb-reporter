@@ -6,7 +6,7 @@
 
     <groupId>com.github.fhuss</groupId>
     <artifactId>kafka-influxdb-metrics-reporter</artifactId>
-    <version>0.2.0-rc0</version>
+    <version>0.3.0</version>
 
     <licenses>
         <license>
@@ -75,6 +75,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.5.1</version>
                 <configuration>
                     <source>1.8</source>
                     <target>1.8</target>
@@ -97,6 +98,12 @@
                             <shadedArtifactAttached>true</shadedArtifactAttached>
                             <shadedClassifierName>${shaded.name}</shadedClassifierName>
                             <artifactSet>
+                                <!-- exclude these to ensure no conflicts with those provided by Kafka -->
+                                <excludes>
+                                    <exclude>com.typesafe.netty:*</exclude>
+                                    <exclude>org.javassist:javassist</exclude>
+                                    <exclude>org.slf4j:slf4j-api</exclude>
+                                </excludes>
                                 <includes>
                                     <include>*:*</include>
                                 </includes>
