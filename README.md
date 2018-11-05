@@ -48,7 +48,7 @@ SELECT * FROM RequestMetrics WHERE metric = 'TotalTimeMs' AND request = 'Produce
 ## Installation
 
 1. Build this project using `mvn clean package`
-2. Add `kafka-influxdb-metrics-reporter-0.3.0-shaded.jar` to the `libs/` directory of your kafka broker installation.
+2. Add `kafka-influxdb-metrics-reporter-0.4.0-shaded.jar` to the `libs/` directory of your kafka broker installation.
 3. Configure the broker (see the configuration section below).
 4. Restart the broker.
 
@@ -74,7 +74,36 @@ kafka.influxdb.metrics.reporter.enabled=true
 | **kafka.metrics.polling.interval.secs**  | Change the reporting frequency      | 10                |
 | **kafka.influxdb.metrics.omit**          | Comma-separated list of metric names to omit |          |
 | **kafka.influxdb.polling.interval.quantize** | If set to **true**, then reports will be emitted on quantized boundaries. For example: if *kafka.metrics.polling.interval.secs* is 10, then reports will be emitted at 0, 10, 20, 30, 40, 50 seconds past the minute. <br>Otherwise they will be emitted every 10 seconds after initialisation.| false |
+| _Multiple InfluxDB_ |
+| **kafka.influxdb.metrics.address.N**     | See below                           | value from kafka.influxdb.metrics.address |
+| **kafka.influxdb.metrics.database.N**    | See below                           | value from kafka.influxdb.metrics.database |
+| **kafka.influxdb.metrics.username.N**    | See below                           | value from kafka.influxdb.metrics.username |
+| **kafka.influxdb.metrics.password.N**    | See below                           | value from kafka.influxdb.metrics.password |
 
+## Using Multiple InfluxDBs
+If you want to send the same measurements to more than one InfluxDB for resilience these can be
+configured by specifying numerically qualified address, database, username and/or password fields. 
+You can partially specify these details, and configuration will fall back to the unqualified fields.
+
+All other fields (tags, retention etc) are assumed to be consistent across all databases so qualified
+versions will be ignored.
+
+For example, if you have 2 hosts set up, sharing the same authorization details and database name, you _might_ 
+expect to use a configuration which includes:
+
+| |
+|-------------------------------------------------|   
+| kafka.influxdb.metrics.address.1=server_1.monitoring_subnet.internal |
+| kafka.influxdb.metrics.address.2=server_2.monitoring_subnet.internal |
+| kafka.influxdb.metrics.database=influx_dbname |
+| kafka.influxdb.metrics.username=service_writer |
+| kafka.influxdb.metrics.password=writer_password |
+| |
+The numeric qualifiers start at 1, and are incremental. If there is a gap in the properties, the scanning
+for more config will stop. So, if you have address.1, address.2 and address.4, you should only expect to
+see _2_ servers set up (directing measurements to address.1 and address.2)
+
+Refer to the InfluxDBMetricsConfigTest for more examples of supported config. 
 
 ## Metrics measures:
 
@@ -105,6 +134,7 @@ By default all stats are reported. You can disabled some with the following prop
 ![Grafana](./dashboards/Grafana-Kafka-Cluster-Overview.png)
 
 ## Versions
+* 0.4.0: Support redundant Influx Database configuration with full backward compatibility on previous config; Add basic unit tests
 * 0.3.0: Add option to snap reporting time to a predictable (quantized) period, e.g. on 0, 10, 20, ... seconds past the top of the minute 
 * 0.2.0-rc0: POST Truncation bug fix, resolve 400 from Influx where ClusterID sent as numeric
 * 0.1.0: Initial version
