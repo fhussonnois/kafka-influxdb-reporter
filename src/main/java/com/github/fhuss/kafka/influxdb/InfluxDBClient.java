@@ -16,13 +16,24 @@
  */
 package com.github.fhuss.kafka.influxdb;
 
-import org.asynchttpclient.*;
+import com.github.fhuss.kafka.influxdb.InfluxDBMetricsConfig.DBTargetConfig;
+
+import org.asynchttpclient.AsyncHandler;
+import org.asynchttpclient.AsyncHttpClient;
+import org.asynchttpclient.BoundRequestBuilder;
+import org.asynchttpclient.DefaultAsyncHttpClient;
+import org.asynchttpclient.DefaultAsyncHttpClientConfig;
+import org.asynchttpclient.HttpResponseBodyPart;
+import org.asynchttpclient.HttpResponseHeaders;
+import org.asynchttpclient.HttpResponseStatus;
+import org.asynchttpclient.ListenableFuture;
+import org.asynchttpclient.RequestBuilder;
 import org.asynchttpclient.uri.Uri;
-import org.asynchttpclient.util.Base64;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 class InfluxDBClient {
 
@@ -30,34 +41,48 @@ class InfluxDBClient {
 
     private InfluxDBMetricsConfig config;
 
-    private AsyncHttpClient asyncHttpClient;
-
     private boolean isDatabaseCreated = false;
 
-    private String credentials;
+    private final List<ClientConfig> targets;
+
+    /** package private for tests only */
+    static class ClientConfig {
+        final DBTargetConfig dbTargetConfig;
+        private final AsyncHttpClient client;
+        private ClientConfig(DBTargetConfig dbTargetConfig, AsyncHttpClient client) {
+            this.dbTargetConfig = dbTargetConfig;
+            this.client = client;
+        }
+    }
+
 
     /**
      * Creates a new {@link InfluxDBClient} instance.
      *
-     * @param config the configuratoon.
+     * @param config the configuraton.
      */
-    public InfluxDBClient(InfluxDBMetricsConfig config) {
+    InfluxDBClient(InfluxDBMetricsConfig config) {
         this.config = config;
+        this.targets = config.getDBTargetConfig().stream().map(c -> {
+            DefaultAsyncHttpClientConfig.Builder builder = new DefaultAsyncHttpClientConfig.Builder();
+            return new ClientConfig(c, new DefaultAsyncHttpClient(builder.build()));
 
-        DefaultAsyncHttpClientConfig.Builder builder = new DefaultAsyncHttpClientConfig.Builder();
-        this.asyncHttpClient = new DefaultAsyncHttpClient(builder.build());
-
-        this.credentials = Base64.encode((config.getUsername() + ":" + config.getPassword()).getBytes());
-
-        createDatabase(this.config.getDatabase());
+        }).collect(Collectors.toList());
     }
 
-    private boolean createDatabase(String database) {
+    /** initialise the InfluxDBClient - decoupled from constructor for testing */
+    InfluxDBClient init() {
+        targets.forEach(this::createDatabase);
+        return this;
+    }
+
+    private boolean createDatabase(ClientConfig target) {
+        final String database = target.dbTargetConfig.getDatabase();
         try {
             LOG.info("Attempt to create InfluxDB database {}", database);
             this.isDatabaseCreated = executeRequest(
-                    this.asyncHttpClient
-                        .prepareGet(this.config.getConnectString()  + "/query")
+                    target.client
+                        .prepareGet(target.dbTargetConfig.getConnectString()  + "/query")
                         .addQueryParam("q", "CREATE DATABASE " + database))
                         .get();
         } catch (Exception e) {
@@ -67,7 +92,11 @@ class InfluxDBClient {
     }
 
     public void write(List<Point> points) {
-        if (this.isDatabaseCreated || createDatabase(this.config.getDatabase())) {
+        targets.forEach(t -> write(t, points));
+    }
+
+    private void write(ClientConfig target, List<Point> points) {
+        if (this.isDatabaseCreated || createDatabase(target)) {
             StringBuilder sb = new StringBuilder();
 
             for (Point point : points) {
@@ -76,12 +105,14 @@ class InfluxDBClient {
             }
 
             // body size logged in chars, not (UTF-8) bytes
-            LOG.info("sending {} points to InfluxDB, body={}c", points.size(), sb.length());
+            LOG.info("sending {} points to InfluxDB {}, body={}c",
+                    points.size(), target.dbTargetConfig.getConnectString(), sb.length());
+
             RequestBuilder requestBuilder = new RequestBuilder()
-                    .setUri(Uri.create(this.config.getConnectString() + "/write"))
-                    .addQueryParam("db", this.config.getDatabase())
+                    .setUri(Uri.create(target.dbTargetConfig.getConnectString() + "/write"))
+                    .addQueryParam("db", target.dbTargetConfig.getDatabase())
                     .setMethod("POST")
-                    .addHeader("Authorization", "Basic " + credentials)
+                    .addHeader("Authorization", "Basic " + target.dbTargetConfig.getBasicAuthCredentials())
                     .setBody(sb.toString());
 
             requestBuilder.addQueryParam("precision", "ms");
@@ -90,12 +121,17 @@ class InfluxDBClient {
             if( this.config.getConsistency() != null )
                 requestBuilder.addQueryParam("consistency", this.config.getConsistency());
 
-            BoundRequestBuilder request = asyncHttpClient.prepareRequest(requestBuilder.build());
+            BoundRequestBuilder request = target.client.prepareRequest(requestBuilder.build());
             executeRequest(request);
         }
     }
 
-    private ListenableFuture<Boolean> executeRequest(BoundRequestBuilder request) {
+    /** package private for tests only */
+    List<ClientConfig> getTargets() {
+        return targets;
+    }
+
+    ListenableFuture<Boolean> executeRequest(BoundRequestBuilder request) {
         return request.execute(new AsyncHandler<Boolean>() {
             @Override
             public void onThrowable(Throwable throwable) {

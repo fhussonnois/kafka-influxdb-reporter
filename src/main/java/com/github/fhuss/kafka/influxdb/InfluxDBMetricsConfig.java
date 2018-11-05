@@ -18,7 +18,9 @@ package com.github.fhuss.kafka.influxdb;
 
 import com.yammer.metrics.core.MetricName;
 import kafka.utils.VerifiableProperties;
+import org.asynchttpclient.util.Base64;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -30,7 +32,7 @@ class InfluxDBMetricsConfig {
 
     private static final List<String> RETENTION_POLICIES = Arrays.asList("one", "quorum", "all", "any", "");
 
-    private static final String KAFKA_INFLUX_METRICS_CONNECT_CONFIG     = "kafka.influxdb.metrics.address";
+    static final String KAFKA_INFLUX_METRICS_CONNECT_CONFIG     = "kafka.influxdb.metrics.address";
     private static final String KAFKA_INFLUX_METRICS_DATABASE_CONFIG    = "kafka.influxdb.metrics.database";
     private static final String KAFKA_INFLUX_METRICS_USERNAME_CONFIG    = "kafka.influxdb.metrics.username";
     private static final String KAFKA_INFLUX_METRICS_PASSWORD_CONFIG    = "kafka.influxdb.metrics.password";
@@ -42,10 +44,7 @@ class InfluxDBMetricsConfig {
     private static final String KAFKA_INFLUX_METRICS_QUANTIZE_TO_TIME_PERIOD = "kafka.influxdb.polling.interval.quantize";
     static final String KAFKA_INFLUX_METRICS_ENABLE                     = "kafka.influxdb.metrics.reporter.enabled";
 
-    private String connectString;
-    private String database;
-    private String username;
-    private String password;
+    private final List<DBTargetConfig> targets = new ArrayList<>();
     private String consistency;
     private String retention;
     private Map<String, String> tags = new HashMap<>();
@@ -53,16 +52,114 @@ class InfluxDBMetricsConfig {
     private Map<MetricsPredicate.Measures, Boolean> predicates = new HashMap<>();
     private boolean quantizeReportPeriod;
 
+    static final class DBTargetConfig {
+        // if a mapping from "key.id" exists, return it, otherwise return the mapping of "key", falling
+        // back to  "value". For example, where id=1, look for "kafka.influxdb.metrics.database.1" and
+        // if it is missing, try "kafka.influxdb.metrics.database".
+        private static String get(int id, VerifiableProperties props, String key, String value) {
+            return props.getString(qualifiedKey(id, key), props.getString(key, value));
+        }
+        private static String qualifiedKey(int id, String key) {
+            return key + "." + id;
+        }
+
+        // speculate about the number of DB Targets that have been configured by looking for the
+        // last in an incremental sequence of the config keys supported by this class. The
+        // qualified targets are "1" based, not "0" based.
+        private static int deduceNumDBTargets(VerifiableProperties props) {
+            int numQualifiedTarget = 0;
+            for (int i = 1; ; i++) {
+                // a qualified one can exist where any of its variables are specified
+                if (props.containsKey(qualifiedKey(i, KAFKA_INFLUX_METRICS_CONNECT_CONFIG)) ||
+                        props.containsKey(qualifiedKey(i, KAFKA_INFLUX_METRICS_DATABASE_CONFIG)) ||
+                        props.containsKey(qualifiedKey(i, KAFKA_INFLUX_METRICS_USERNAME_CONFIG)) ||
+                        props.containsKey(qualifiedKey(i, KAFKA_INFLUX_METRICS_PASSWORD_CONFIG))) {
+                    // we've found an instance of key.id, look for the next one
+                    numQualifiedTarget++;
+                } else {
+                    // no more instances found
+                    break;
+                }
+            }
+
+            // for an unqualified target to be considered independent of any qualified ones, it
+            // needs to have *all* properties set.
+            int numUnqualifiedTarget = props.containsKey(KAFKA_INFLUX_METRICS_CONNECT_CONFIG) &&
+                    props.containsKey(KAFKA_INFLUX_METRICS_DATABASE_CONFIG) &&
+                    props.containsKey(KAFKA_INFLUX_METRICS_USERNAME_CONFIG) &&
+                    props.containsKey(KAFKA_INFLUX_METRICS_PASSWORD_CONFIG) ? 1 : 0;
+
+            // finally - make sure we still allow for defaults, even if any of the rules above
+            // have not been satisified
+            return Math.max(1, numQualifiedTarget + numUnqualifiedTarget);
+        }
+
+        /** package private factory method for test only */
+        static DBTargetConfig forTest(String connectString, String username, String password, String database) {
+            return new DBTargetConfig(connectString, username, password, database);
+        }
+
+        private final String connectString;
+        private final String username;
+        private final String password;
+        private final String database;
+
+        /**
+         * Configure this DBTargetConfig object from the properties suffixed
+         * with '.N', falling back to the non-suffixed value as necessary.
+         * @param id
+         * @param props
+         */
+        private DBTargetConfig(int id, VerifiableProperties props) {
+            this(get(id, props, KAFKA_INFLUX_METRICS_CONNECT_CONFIG, "http://localhost:8086"),
+                    get(id, props, KAFKA_INFLUX_METRICS_USERNAME_CONFIG, "root"),
+                    get(id, props, KAFKA_INFLUX_METRICS_PASSWORD_CONFIG, "root"),
+                    get(id, props, KAFKA_INFLUX_METRICS_DATABASE_CONFIG, "kafka"));
+        }
+
+        private DBTargetConfig(String connectString, String username, String password, String database) {
+            this.connectString = connectString;
+            this.database = database;
+            this.username = username;
+            this.password = password;
+        }
+
+        String getConnectString() {
+            return this.connectString;
+        }
+
+        String getDatabase() {
+            return this.database;
+        }
+
+        String getUsername() {
+            return this.username;
+        }
+
+        String getPassword() {
+            return this.password;
+        }
+
+        /**
+         * One-stop shop to get base64 encoded credentials for basic auth
+         * @return
+         */
+        String getBasicAuthCredentials() {
+            return Base64.encode((getUsername() + ":" + getPassword()).getBytes());
+        }
+    }
+
     /**
      * Creates a new {@link InfluxDBMetricsConfig} instance.
      *
      * @param props  The Kafka configuration.
      */
     InfluxDBMetricsConfig(VerifiableProperties props) {
-        this.connectString = props.getString(KAFKA_INFLUX_METRICS_CONNECT_CONFIG, "http://localhost:8086");
-        this.database = props.getString(KAFKA_INFLUX_METRICS_DATABASE_CONFIG, "kafka");
-        this.username = props.getString(KAFKA_INFLUX_METRICS_USERNAME_CONFIG, "root");
-        this.password = props.getString(KAFKA_INFLUX_METRICS_PASSWORD_CONFIG, "root");
+        int numTargets = DBTargetConfig.deduceNumDBTargets(props);
+
+        for (int i = 1; i <= numTargets; i++) {
+            targets.add(new DBTargetConfig(i, props));
+        }
         if( props.containsKey(KAFKA_INFLUX_METRICS_CONSISTENCY_CONFIG) )
             this.consistency = props.getString(KAFKA_INFLUX_METRICS_CONSISTENCY_CONFIG);
         if( props.containsKey(KAFKA_INFLUX_METRICS_TAGS_CONFIG) ) {
@@ -73,6 +170,10 @@ class InfluxDBMetricsConfig {
         setAdditionalTags(props);
         setMeasuresFilters(props);
         setOmit(props);
+    }
+
+    List<DBTargetConfig> getDBTargetConfig() {
+        return targets;
     }
 
     private void setMeasuresFilters(VerifiableProperties props) {
@@ -108,21 +209,6 @@ class InfluxDBMetricsConfig {
         }
     }
 
-    public void setConnectString(String connectString) {
-        this.connectString = connectString;
-    }
-
-    public void setDatabase(String database) {
-        this.database = database;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
-    }
 
     public void setConsistency(String consistency) {
         this.consistency = consistency;
@@ -142,22 +228,6 @@ class InfluxDBMetricsConfig {
 
     Map<String, String> getTags() {
         return this.tags;
-    }
-
-    String getConnectString() {
-        return this.connectString;
-    }
-
-    String getDatabase() {
-        return this.database;
-    }
-
-    String getUsername() {
-        return this.username;
-    }
-
-    String getPassword() {
-        return this.password;
     }
 
     String getConsistency() {
