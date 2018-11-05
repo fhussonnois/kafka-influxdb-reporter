@@ -99,6 +99,7 @@ expect to use a configuration which includes:
 | kafka.influxdb.metrics.username=service_writer |
 | kafka.influxdb.metrics.password=writer_password |
 | |
+
 The numeric qualifiers start at 1, and are incremental. If there is a gap in the properties, the scanning
 for more config will stop. So, if you have address.1, address.2 and address.4, you should only expect to
 see _2_ servers set up (directing measurements to address.1 and address.2)
